@@ -1,9 +1,10 @@
 const { Client } = require("@notionhq/client");
 const Anthropic = require("@anthropic-ai/sdk");
 const fs = require("fs");
+const applescript = require("applescript");
 require("dotenv").config();
 
-// Configuration - now using environment variables
+// Configuration - using environment variables
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
@@ -11,15 +12,12 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const notion = new Client({ auth: NOTION_TOKEN });
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-// Database IDs - now using environment variables
+// Database ID - using environment variable
 const TASKS_DATABASE_ID = process.env.TASKS_DATABASE_ID;
-const RECAP_DATABASE_ID = process.env.RECAP_DATABASE_ID;
-const WEEKS_DATABASE_ID = process.env.WEEKS_DATABASE_ID;
 
-// ⭐ CONFIGURE THIS: Set the week(s) you want to process
-const TARGET_WEEKS = [
-  4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-]; // Single week: [22] | Multiple weeks: [20, 21, 22, 23]
+// ⭐ CONFIGURE THIS: Note title to look for and hashtags within those notes
+const NOTE_TITLE_HASHTAG = "#Tasks";
+const CONTENT_HASHTAGS = ["#work", "#personal"];
 
 // Load context file (optional - will work without it)
 let CONTEXT = "";
@@ -28,213 +26,173 @@ try {
   console.log("📖 Loaded context file");
 } catch (error) {
   console.log(
-    "📝 No context file found - create context.md to add definitions and style rules"
+    "📝 No context file found - create context.md to add classification context"
   );
 }
 
-// Task categories configuration
+// Task categories configuration (only for #tasks - #work is automatic)
 const TASK_CATEGORIES = [
-  {
-    notionValue: "🏃‍♂️ Physical Health",
-    summaryField: "Physical Health Summary",
-    promptContext: "health task",
-  },
-  {
-    notionValue: "💼 Work",
-    summaryField: "Work Summary",
-    promptContext: "work task",
-  },
-  {
-    notionValue: "🌱 Personal",
-    summaryField: "Personal Summary",
-    promptContext: "personal task",
-  },
-  {
-    notionValue: "🍻 Interpersonal",
-    summaryField: "Interpersonal Summary",
-    promptContext: "interpersonal task",
-  },
-  {
-    notionValue: "❤️ Mental Health",
-    summaryField: "Mental Health Summary",
-    promptContext: "mental health task",
-  },
-  {
-    notionValue: "🏠 Home",
-    summaryField: "Home Summary",
-    promptContext: "home task",
-  },
+  "🏃‍♂️ Physical Health",
+  "🌱 Personal",
+  "🍻 Interpersonal",
+  "❤️ Mental Health",
+  "🏠 Home",
 ];
 
-async function generateAllWeekSummaries() {
+async function processAppleNotesToNotion() {
   try {
-    console.log(
-      `🚀 Starting summary generation for weeks: ${TARGET_WEEKS.join(", ")}`
-    );
-    console.log(`📊 Processing ${TARGET_WEEKS.length} week(s)...\n`);
+    console.log("🚀 Starting Apple Notes to Notion task automation...");
+    console.log(`🔍 Looking for notes titled with: ${NOTE_TITLE_HASHTAG}`);
+    console.log(`📋 Content hashtags: ${CONTENT_HASHTAGS.join(", ")}\n`);
 
-    for (const weekNumber of TARGET_WEEKS) {
-      console.log(`\n🗓️  === PROCESSING WEEK ${weekNumber} ===`);
-      await generateWeekSummary(weekNumber);
-    }
+    // Step 1: Find notes with target hashtags
+    const notesWithTasks = await findNotesWithHashtags();
 
-    console.log(
-      `\n🎉 Successfully completed all ${TARGET_WEEKS.length} week(s)!`
-    );
-  } catch (error) {
-    console.error("❌ Error in batch processing:", error);
-  }
-}
-
-async function generateWeekSummary(targetWeek) {
-  try {
-    // 1. Get all recap pages and find target week
-    const recapPages = await notion.databases.query({
-      database_id: RECAP_DATABASE_ID,
-    });
-
-    // Find target week by looking at page titles with smart padding
-    let targetWeekPage = null;
-    const paddedWeek = targetWeek.toString().padStart(2, "0");
-
-    for (const page of recapPages.results) {
-      const titleProperty = page.properties["Week Recap"];
-      if (titleProperty && titleProperty.title) {
-        const title = titleProperty.title.map((t) => t.plain_text).join("");
-
-        if (
-          title === `Week ${targetWeek} Recap` ||
-          title === `Week ${paddedWeek} Recap` ||
-          title === `Week ${targetWeek}` ||
-          title === `Week ${paddedWeek}`
-        ) {
-          targetWeekPage = page;
-          console.log(`✅ Found Week ${paddedWeek} Recap!`);
-          break;
-        }
-      }
-    }
-
-    if (!targetWeekPage) {
-      console.log(`❌ Could not find Week ${targetWeek} Recap`);
-      return;
-    }
-
-    // 2. Get the week relation
-    const weekRelation = targetWeekPage.properties["⌛ Weeks"].relation;
-    if (!weekRelation || weekRelation.length === 0) {
-      console.log(`❌ Week ${targetWeek} has no week relation`);
-      return;
-    }
-
-    const weekPageId = weekRelation[0].id;
-
-    // 3. Get the week details for date range
-    const weekPage = await notion.pages.retrieve({ page_id: weekPageId });
-
-    const dateRange = weekPage.properties["Date Range (SET)"].date;
-    if (!dateRange) {
-      console.log(`❌ Week ${targetWeek} has no date range`);
-      return;
-    }
-
-    const startDate = dateRange.start;
-    const endDate = dateRange.end;
-
-    console.log(`📅 Week ${paddedWeek} date range: ${startDate} to ${endDate}`);
-
-    // 4. Process each category
-    const summaryUpdates = {};
-
-    for (const category of TASK_CATEGORIES) {
-      console.log(`\n🔄 Processing ${category.notionValue}...`);
-
-      // Query tasks for this category using Due Date within the week's date range
-      const tasksResponse = await notion.databases.query({
-        database_id: TASKS_DATABASE_ID,
-        filter: {
-          and: [
-            {
-              property: "Due Date",
-              date: {
-                on_or_after: startDate,
-              },
-            },
-            {
-              property: "Due Date",
-              date: {
-                on_or_before: endDate,
-              },
-            },
-            {
-              property: "Type",
-              select: {
-                equals: category.notionValue,
-              },
-            },
-            {
-              property: "Status",
-              status: {
-                equals: "🟢 Done",
-              },
-            },
-          ],
-        },
-      });
-
+    if (notesWithTasks.length === 0) {
       console.log(
-        `📋 Found ${tasksResponse.results.length} ${category.notionValue} tasks`
+        "✅ No notes found with target hashtags. Nothing to process!"
       );
-
-      if (tasksResponse.results.length === 0) {
-        // Create short, clear empty message
-        const categoryName = category.notionValue
-          .replace(/🏃‍♂️|💼|🌱|🍻|❤️|🏠/g, "")
-          .trim();
-        summaryUpdates[
-          category.summaryField
-        ] = `No ${categoryName} tasks this week.`;
-        console.log(`📝 Empty summary for ${category.notionValue}`);
-        continue;
-      }
-
-      // Extract task names
-      const taskNames = tasksResponse.results.map((task) => {
-        const titleProperty = task.properties.Task;
-        if (titleProperty && titleProperty.title) {
-          return titleProperty.title.map((t) => t.plain_text).join("");
-        }
-        return "Untitled task";
-      });
-
-      console.log(`📝 Tasks to summarize:`, taskNames);
-
-      // Generate AI summary
-      const summary = await generateAISummary(
-        taskNames,
-        category.promptContext
-      );
-      summaryUpdates[category.summaryField] = summary;
-
-      console.log(`🤖 Generated summary: ${summary}`);
+      return;
     }
 
-    // 5. Update all summaries at once
-    await updateAllSummaries(targetWeekPage.id, summaryUpdates);
-    console.log(
-      `✅ Successfully updated Week ${paddedWeek} recap with all category summaries!`
-    );
+    console.log(`📝 Found ${notesWithTasks.length} note(s) with tasks`);
+
+    // Step 2: Extract bullet points from all notes
+    const allTasks = [];
+
+    for (const note of notesWithTasks) {
+      console.log(`\n📋 Processing note: "${note.name}"`);
+      const tasks = extractBulletPointsByHashtag(note.body);
+
+      if (tasks.length > 0) {
+        console.log(`   Found ${tasks.length} task(s)`);
+        allTasks.push(...tasks);
+      } else {
+        console.log(`   No bullet points found`);
+      }
+    }
+
+    if (allTasks.length === 0) {
+      console.log("\n✅ No tasks extracted from notes. Nothing to upload!");
+      return;
+    }
+
+    console.log(`\n🎯 Total tasks to process: ${allTasks.length}`);
+
+    // Step 3: Classify tasks that need AI classification
+    for (const task of allTasks) {
+      if (task.hashtag === "#work") {
+        task.category = "💼 Work";
+        console.log(`💼 "${task.text}" → Work (auto-assigned)`);
+      } else if (task.hashtag === "#personal") {
+        // Use AI to classify #personal items
+        task.category = await classifyTask(task.text);
+        console.log(`🤖 "${task.text}" → ${task.category}`);
+      }
+    }
+
+    // Step 4: Create Notion entries
+    console.log(`\n📤 Creating ${allTasks.length} Notion task(s)...`);
+    await createNotionTasks(allTasks);
+
+    console.log(`\n🎉 Successfully processed ${allTasks.length} task(s)!`);
+    console.log("📝 Note: Notes were left unchanged (v1 behavior)");
   } catch (error) {
-    console.error(`❌ Error processing Week ${targetWeek}:`, error);
+    console.error("❌ Error in Apple Notes processing:", error);
   }
 }
 
-async function generateAISummary(taskNames, promptContext) {
+async function findNotesWithHashtags() {
+  console.log("🔍 Scanning Apple Notes for #Tasks titles...");
+
+  const script = `
+    tell application "Notes"
+      set noteList to {}
+      set noteCount to 0
+      repeat with theAccount in accounts
+        repeat with theFolder in folders of theAccount
+          repeat with theNote in notes of theFolder
+            set noteName to name of theNote
+            
+            if noteName contains "${NOTE_TITLE_HASHTAG}" then
+              set noteBody to body of theNote
+              set noteCount to noteCount + 1
+              set end of noteList to {name:noteName, body:noteBody}
+              
+              -- Safety limit to prevent memory issues
+              if noteCount > 10 then
+                return noteList
+              end if
+            end if
+          end repeat
+        end repeat
+      end repeat
+      return noteList
+    end tell
+  `;
+
+  return new Promise((resolve, reject) => {
+    applescript.execString(script, (err, result) => {
+      if (err) {
+        console.error("❌ AppleScript error:", err);
+        reject(err);
+      } else {
+        // Convert AppleScript result to JavaScript array
+        const notes = Array.isArray(result) ? result : [];
+        console.log(
+          `✅ Found ${notes.length} note(s) with ${NOTE_TITLE_HASHTAG} in title`
+        );
+        resolve(notes);
+      }
+    });
+  });
+}
+
+function extractBulletPointsByHashtag(noteBody) {
+  const lines = noteBody.split("\n");
+  const bulletPoints = [];
+  let currentHashtag = null;
+
+  // Look for lines that start with bullet point markers
+  const bulletRegex = /^\s*[•\-\*]|\d+\.\s/;
+  const hashtagRegex = /^#(work|personal)$/i;
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+
+    // Check if this line is a hashtag
+    if (hashtagRegex.test(trimmedLine)) {
+      currentHashtag = trimmedLine.toLowerCase();
+      continue;
+    }
+
+    // Check if this line is a bullet point
+    if (bulletRegex.test(trimmedLine) && currentHashtag) {
+      // Remove bullet point marker and clean up text
+      const cleanText = trimmedLine
+        .replace(/^\s*[•\-\*]/, "") // Remove •, -, * bullets
+        .replace(/^\s*\d+\.\s/, "") // Remove numbered bullets
+        .trim();
+
+      // Only add non-empty bullet points
+      if (cleanText.length > 0) {
+        bulletPoints.push({
+          text: cleanText,
+          hashtag: currentHashtag,
+        });
+      }
+    }
+  }
+
+  return bulletPoints;
+}
+
+async function classifyTask(taskText) {
   // Build prompt with optional context
   let prompt = "";
 
   if (CONTEXT) {
-    prompt += `CONTEXT FOR BETTER SUMMARIES:
+    prompt += `CONTEXT FOR BETTER CLASSIFICATION:
 ${CONTEXT}
 
 ---
@@ -242,64 +200,81 @@ ${CONTEXT}
 `;
   }
 
-  prompt += `Convert these ${promptContext}s into a concise summary. I need clear, professional language that respects my time - no fluff or unnecessary words.
+  prompt += `Classify this personal task into exactly ONE of these categories:
 
-RULES:
-- 1-3 sentences maximum (4+ is too much)
-- Group similar/related items together when possible
-- Professional, direct language - not casual
-- Be matter-of-fact and neutral - no judgment about outcomes
-- Focus on WHAT I did, not how well I did it
-- NO bullet points, NO lists, NO line breaks
-- Cut all unnecessary words - be efficient
+CATEGORIES:
+- 🏃‍♂️ Physical Health
+- 🌱 Personal
+- 🍻 Interpersonal  
+- ❤️ Mental Health
+- 🏠 Home
 
-GROUPING EXAMPLES:
-Multiple games: "ECG Game 3, ECG Game 4, ECG Game 5" → "Played ECG Games 3, 4, 5"
-Multiple appointments: "Dr. Smith checkup, Dr. Jones blood test" → "Had appointments with Dr. Smith and Dr. Jones"
-Multiple chores: "Clean kitchen, Vacuum living room, Dishes" → "Cleaned kitchen, vacuumed living room, did dishes"
-Multiple meetings: "Team standup, Client call, 1:1 with manager" → "Had team standup, client call, and 1:1 with manager"
+TASK: "${taskText}"
 
-SINGLE ITEM EXAMPLES:
-"Dr. Smith - checkup" → "Had checkup with Dr. Smith"
-"Gym - leg day" → "Did leg day at gym"
-"Therapy - Jernee Montoya" → "Had therapy with Jernee Montoya"
-"Hackathon" → "Participated in hackathon"
-
-TASKS TO SUMMARIZE:
-${taskNames.map((name) => `${name}`).join("\n")}
-
-Return 1-3 concise sentences combining these activities:`;
+Return ONLY the category with emoji, nothing else.`;
 
   const message = await anthropic.messages.create({
     model: "claude-3-haiku-20240307",
-    max_tokens: 80,
+    max_tokens: 20,
     messages: [{ role: "user", content: prompt }],
   });
 
-  return message.content[0].text.trim();
+  const classification = message.content[0].text.trim();
+
+  // Validate classification is one of our expected categories
+  if (TASK_CATEGORIES.includes(classification)) {
+    return classification;
+  } else {
+    // Fallback to Personal if classification is unclear
+    console.log(
+      `⚠️  Unclear classification "${classification}", defaulting to Personal`
+    );
+    return "🌱 Personal";
+  }
 }
 
-async function updateAllSummaries(pageId, summaryUpdates) {
-  const properties = {};
+async function createNotionTasks(tasks) {
+  const today = new Date().toISOString().split("T")[0]; // Today's date in YYYY-MM-DD format
 
-  // Convert summaries to Notion property format
-  for (const [fieldName, summary] of Object.entries(summaryUpdates)) {
-    properties[fieldName] = {
-      rich_text: [
-        {
-          text: {
-            content: summary,
+  for (const task of tasks) {
+    try {
+      await notion.pages.create({
+        parent: { database_id: TASKS_DATABASE_ID },
+        properties: {
+          Task: {
+            title: [
+              {
+                text: {
+                  content: task.text,
+                },
+              },
+            ],
+          },
+          "Due Date": {
+            date: {
+              start: today,
+            },
+          },
+          Type: {
+            select: {
+              name: task.category,
+            },
+          },
+          Status: {
+            status: {
+              name: "🔴 To Do",
+            },
           },
         },
-      ],
-    };
-  }
+      });
 
-  await notion.pages.update({
-    page_id: pageId,
-    properties: properties,
-  });
+      console.log(`✅ Created: "${task.text}"`);
+    } catch (error) {
+      console.error(`❌ Failed to create task "${task.text}":`, error.message);
+      throw error; // Re-throw to stop processing on any failure
+    }
+  }
 }
 
 // Run the script
-generateAllWeekSummaries();
+processAppleNotesToNotion();

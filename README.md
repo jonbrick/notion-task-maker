@@ -1,234 +1,233 @@
-# Notion AI Task Maker
+# Apple Notes to Notion Task Automation
 
-// TO BE CHANGED!!
-Automated system that generates AI-powered summaries of completed tasks by category for weekly retrospectives in Notion. Uses Claude AI to create professional, concise summaries that respect your time and use natural language.
+A simple, powerful automation tool that captures tasks from Apple Notes and creates them in Notion with AI-powered categorization. Write tasks naturally in Apple Notes, and let this script handle the organization.
 
 ## ✨ Features
 
-- **Smart Week Processing**: Handle single weeks or batch process multiple weeks
-- **Intelligent Padding**: Works with both "Week 1" and "Week 01" naming conventions
-- **AI-Powered Summaries**: Professional, concise summaries that group similar tasks
-- **Personal Context**: Customizable context file for definitions and writing style
-- **Category Support**: Processes all task types (Work, Personal, Interpersonal, Physical Health, Mental Health, Home)
-- **Natural Language**: Avoids corporate HR speak in favor of human, professional tone
+- **Natural Task Capture**: Write tasks in Apple Notes without special formatting
+- **AI-Powered Classification**: Automatically categorizes personal tasks using Claude AI
+- **Comment Support**: Use `//` to add notes that won't become tasks
+- **Auto-Cleanup**: Removes processed tasks while preserving comments and structure
+- **Flexible Input**: Works with bullets (`*`, `-`) or plain text
+- **Debug Mode**: Built-in debugging for troubleshooting
 
 ## 🚀 Quick Start
 
-1. **Clone and install**:
+### Prerequisites
+
+- macOS (for Apple Notes access)
+- Node.js (v14 or higher)
+- Notion account with API access
+- Anthropic Claude API key
+
+### Installation
+
+1. Clone the repository:
 
    ```bash
-   git clone <your-repo>
-   cd notion-scripts
+   git clone <repository-url>
+   cd task-maker
+   ```
+
+2. Install dependencies:
+
+   ```bash
    npm install
    ```
 
-2. **Set up environment** (create `.env` file):
-
+3. Create a `.env` file with your credentials:
    ```env
    NOTION_TOKEN=your_notion_integration_token
    ANTHROPIC_API_KEY=your_claude_api_key
-   TASKS_DATABASE_ID=your_tasks_database_id
-   RECAP_DATABASE_ID=your_recap_database_id
-   WEEKS_DATABASE_ID=your_weeks_database_id
+   TASKS_DATABASE_ID=your_notion_tasks_database_id
    ```
 
-3. **Configure weeks** (edit `summary.js` line 17):
+### Notion Database Setup
 
-   ```javascript
-   const TARGET_WEEKS = [1, 2, 3, 4]; // Any weeks you want to process
-   ```
+Your Notion tasks database should have these properties:
 
-4. **Run**:
-   ```bash
-   node summary.js
-   ```
-
-## 📋 Notion Setup Requirements
-
-### 2025 Tasks Table
-
-- **Task** (Title) - Task name
-- **Due Date** (Date) - When task is due/completed
-- **Type** (Select) - Categories:
+- **Task** (Title) - The task description
+- **Due Date** (Date) - Set to today by default
+- **Type** (Select) - With these options:
   - 🏃‍♂️ Physical Health
   - 💼 Work
   - 🌱 Personal
   - 🍻 Interpersonal
   - ❤️ Mental Health
   - 🏠 Home
-- **Status** (Status) - Must include "🟢 Done" option
-- **Week Number** (Number) - Optional, for reference
+- **Status** (Status) - Including "🔴 To Do"
 
-### 2025 Recap Table
+## 📝 Usage
 
-- **Week Recap** (Title) - Week identifier (e.g., "Week 01 Recap")
-- **⌛ Weeks** (Relation) - Links to 2025 Weeks table
-- **Summary Fields** (Rich Text):
-  - Physical Health Summary
-  - Work Summary
-  - Personal Summary
-  - Interpersonal Summary
-  - Mental Health Summary
-  - Home Summary
+### 1. Create Apple Notes
 
-### 2025 Weeks Table
+Create two notes in Apple Notes:
 
-- **Date Range (SET)** (Date Range) - Start and end date for each week
-- **Title/Name** - Week identifier (e.g., "Week 01")
+- One titled `#Work` (or `#work`, `#WORK`)
+- One titled `#Personal` (or `#personal`, `#PERSONAL`)
 
-## 🎯 Usage Examples
+### 2. Add Tasks
 
-### Single Week
+Write tasks naturally in your notes:
 
-```javascript
-const TARGET_WEEKS = [22];
+**#Work note:**
+
+```
+#Work
+Fix bug in login flow
+Review design mockups
+Call client about project
+
+// Done yesterday:
+// Updated documentation
 ```
 
-### Multiple Weeks
+**#Personal note:**
 
-```javascript
-const TARGET_WEEKS = [1, 2, 3, 4];
+```
+#Personal
+Workout
+Buy groceries
+* Call mom
+- Schedule dentist appointment
+
+// Weekend plans
+Go hiking
+// Remember to bring water
 ```
 
-### Catch Up on a Month
+### 3. Run the Script
 
-```javascript
-const TARGET_WEEKS = [15, 16, 17, 18, 19];
+```bash
+node process-notes.js
 ```
 
-### Mixed Weeks
+For debugging:
 
-```javascript
-const TARGET_WEEKS = [1, 11, 22, 33];
+```bash
+DEBUG=true node process-notes.js
 ```
 
-## 📝 Customization
+### 4. Results
 
-### Personal Context File
+- Tasks are created in Notion with appropriate categories
+- Work tasks → automatically categorized as "💼 Work"
+- Personal tasks → AI categorized (e.g., "Workout" → "🏃‍♂️ Physical Health")
+- Comments (lines starting with `//`) are preserved
+- Processed tasks are removed from notes
 
-Create `context.md` to customize AI behavior:
+## 🎯 Task Categories
+
+The AI automatically categorizes personal tasks into:
+
+- **🏃‍♂️ Physical Health**: Exercise, sports, fitness activities
+- **🌱 Personal**: Reading, learning, hobbies, personal projects
+- **🍻 Interpersonal**: Social activities, friends, family time
+- **❤️ Mental Health**: Meditation, therapy, self-care
+- **🏠 Home**: Cleaning, organizing, household tasks
+
+## 💡 Tips & Tricks
+
+### Comments
+
+Use `//` to add context without creating tasks:
+
+```
+// Morning routine
+Make coffee
+Meditate 10 mins
+// After work
+Gym class at 6pm
+```
+
+### Natural Writing
+
+No special formatting needed:
+
+```
+Call John about the proposal
+* Pick up dry cleaning
+- Buy birthday gift for Sarah
+Schedule team lunch
+```
+
+All formats work - bullets are optional!
+
+### Custom Context (Optional)
+
+Create a `context.md` file to improve AI categorization:
 
 ```markdown
-# AI Summary Context
+# Context for AI Task Classification
 
-## Writing Style Rules
+## People
 
-### Avoid Corporate HR Speak
+- Sarah: My sister
+- John: Project manager at work
 
-- NEVER use: "participated in", "collaborated", "attended social events"
-- Use natural verbs: "went to", "worked with", "hung out"
+## Places
 
-## Definitions
-
-### People
-
-- **Person Name**: Relationship or context
-
-### Bars/Restaurants
-
-- **Place Name**: Type of establishment
-
-### General
-
-- **Abbreviation**: Full meaning
+- Gym class: Usually refers to spin class at FitLife
 ```
-
-### Output Examples
-
-**Before customization:**
-
-> "Participated in social events with colleagues and attended multiple restaurants for dining experiences."
-
-**After customization:**
-
-> "Went to Pubkey with Alex and Pat, had dinner at Gene's with Jen."
 
 ## 🔧 Configuration
 
-### Week Naming
+### Environment Variables
 
-The script automatically handles both formats:
+- `NOTION_TOKEN`: Your Notion integration token
+- `ANTHROPIC_API_KEY`: Claude API key for classification
+- `TASKS_DATABASE_ID`: ID of your Notion tasks database
+- `DEBUG`: Set to 'true' for verbose output
 
-- Single digit: "Week 1 Recap" → "Week 01 Recap"
-- Double digit: "Week 11 Recap" (no change needed)
+### Customization
 
-### AI Settings
+Edit these in `process-notes.js`:
 
-- **Model**: Claude 3 Haiku (cost-effective)
-- **Max tokens**: 80 (keeps summaries concise)
-- **Cost**: ~$0.003 per week summary
-
-## 📊 Sample Output
-
-```bash
-🚀 Starting summary generation for weeks: 1, 2, 3, 4
-📊 Processing 4 week(s)...
-
-🗓️  === PROCESSING WEEK 1 ===
-✅ Found Week 01 Recap!
-📅 Week 01 date range: 2024-12-29 to 2025-01-04
-
-🔄 Processing 🏃‍♂️ Physical Health...
-📋 Found 0 Physical Health tasks
-📝 No Physical Health tasks this week.
-
-🔄 Processing 🍻 Interpersonal...
-📋 Found 9 Interpersonal tasks
-🤖 Generated summary: Went to Pubkey with Alex and Pat, had dinner at Gene's with Jen, attended all 3 Phish concerts.
-
-✅ Successfully updated Week 01 recap!
-🎉 Successfully completed all 4 week(s)!
-```
-
-## 🛡️ Security
-
-- **API keys**: Protected in `.env` (not committed to git)
-- **Personal context**: `context.md` excluded from git
-- **Database IDs**: Stored securely in environment variables
+- Task categories (add/remove/modify)
+- AI model (default: claude-3-haiku-20240307)
+- Default task status
 
 ## 🐛 Troubleshooting
 
-### "Could not find Week X Recap"
+### "No notes found"
 
-- Check that your recap page is named exactly "Week XX Recap"
-- Verify the page exists in your Recap database
+- Ensure notes are titled exactly `#Work` or `#Personal`
+- Check that notes exist in the default Notes account
 
-### "Week X has no week relation"
+### Tasks not being created
 
-- Ensure your recap page is linked to the correct week in the "⌛ Weeks" field
+- Verify your Notion database has all required properties
+- Check that task types match your database options
+- Run with `DEBUG=true` to see detailed output
 
-### "No tasks found"
+### Cleanup issues
 
-- Verify tasks have Status = "🟢 Done"
-- Check that Due Date falls within the week's date range
-- Confirm task Type matches the expected categories
+- Apple Notes sometimes adds special characters
+- Comments should start with `//` at the beginning of the line
+- The script preserves note structure and spacing
 
-### Context not loading
+## 📚 How It Works
 
-- Ensure `context.md` exists in the same folder as `summary.js`
-- Check file permissions and encoding (should be UTF-8)
+1. **Searches** Apple Notes for notes titled #Work or #Personal
+2. **Extracts** all non-empty lines as potential tasks
+3. **Filters** out comments (lines starting with //)
+4. **Categorizes** tasks using AI (for personal) or defaults (for work)
+5. **Creates** tasks in Notion with today's date
+6. **Cleans** notes by removing processed tasks, keeping comments
 
-## 💰 Cost Estimation
+## 🤝 Contributing
 
-- **Per week**: ~$0.003 (0.3 cents)
-- **Per year (52 weeks)**: ~$0.16
-- **Batch processing 10 weeks**: ~$0.03
+Feel free to open issues or submit pull requests. Some ideas for improvements:
 
-Very cost-effective for the time saved!
-
-## 🔄 Version History
-
-- **v1.0**: Basic single-week processing
-- **v2.0**: Added multi-week array support
-- **v3.0**: Smart padding for week numbers
-- **v4.0**: Personal context file integration
-- **v5.0**: Improved natural language and corporate speak removal
+- Support for due dates in task text
+- Additional task properties
+- Custom categories
+- Multiple note support
 
 ## 📄 License
 
-MIT License - Feel free to customize for your own workflow!
+MIT License - Use freely and modify as needed!
 
 ---
 
-**Built with**: Notion API, Claude AI, Node.js
-**Time saved**: Hours of manual weekly review work automated away! 🎉
+Built with ❤️ to make task management effortless

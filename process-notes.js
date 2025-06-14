@@ -4,6 +4,9 @@ const fs = require("fs");
 const { execSync } = require("child_process");
 require("dotenv").config();
 
+// Add a DEBUG flag at the top of the file
+const DEBUG = process.env.DEBUG === "true" || false;
+
 // Configuration - using environment variables
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -39,37 +42,38 @@ const TASK_CATEGORIES = [
 async function processAppleNotesToNotion() {
   try {
     console.log("🚀 Starting Apple Notes to Notion task automation...");
-    console.log(
-      "🔍 Looking for notes with #Tasks in title (case-insensitive)\n"
-    );
+    console.log("🔍 Looking for notes titled #Work or #Personal\n");
 
-    // Step 1: Find notes with #Tasks in title
-    const notesWithTasks = await findTaskNotes();
+    // Find both #Work and #Personal notes
+    const allNotes = await findTaskNotes();
 
-    if (notesWithTasks.length === 0) {
-      console.log("✅ No notes found with #Tasks. Nothing to process!");
+    if (allNotes.length === 0) {
+      console.log(
+        "❌ No notes found with #Work or #Personal. Nothing to process!"
+      );
       return;
     }
 
-    console.log(`📝 Found ${notesWithTasks.length} note(s) with #Tasks`);
+    console.log(`📝 Found ${allNotes.length} note(s) to process`);
 
-    // Step 2: Process each note
     let totalTasksProcessed = 0;
 
-    for (const noteInfo of notesWithTasks) {
-      console.log(`\n📋 Processing note: "${noteInfo.name}"`);
+    // Process each note
+    for (const note of allNotes) {
+      const noteType = note.name.toLowerCase().includes("work")
+        ? "work"
+        : "personal";
+      console.log(
+        `\n📋 Processing ${
+          noteType === "work" ? "💼 Work" : "🌱 Personal"
+        } note: "${note.name}"`
+      );
 
       // Get the full note content
-      const noteContent = await getNoteContent(noteInfo.id);
+      const noteContent = await getNoteContent(note.id);
 
-      // Debug: Show the raw content
-      console.log("\n📄 Note content:");
-      console.log("---START---");
-      console.log(noteContent);
-      console.log("---END---\n");
-
-      // Extract tasks by hashtag
-      const tasks = extractTasksByHashtag(noteContent);
+      // Extract all non-empty lines as tasks
+      const tasks = extractTasks(noteContent, note.name);
 
       if (tasks.length === 0) {
         console.log("   No tasks found in this note");
@@ -78,26 +82,27 @@ async function processAppleNotesToNotion() {
 
       console.log(`   Found ${tasks.length} task(s)`);
 
-      // Step 3: Classify tasks
+      // Process tasks based on type
       for (const task of tasks) {
-        if (task.hashtag.toLowerCase() === "#work") {
+        if (noteType === "work") {
           task.category = "💼 Work";
-          console.log(`   💼 "${task.text}" → Work (auto-assigned)`);
-        } else if (task.hashtag.toLowerCase() === "#personal") {
-          task.category = await classifyTask(task.text);
+          console.log(`   💼 "${task.text}" → Work`);
+        } else {
+          // Use AI to classify personal tasks
+          task.category = await classifyPersonalTask(task.text);
           console.log(`   🤖 "${task.text}" → ${task.category}`);
         }
       }
 
-      // Step 4: Create Notion entries
+      // Create Notion entries
       console.log(`\n📤 Creating ${tasks.length} Notion task(s)...`);
       await createNotionTasks(tasks);
 
       totalTasksProcessed += tasks.length;
 
-      // Step 5: Remove #Tasks from note title
-      console.log(`\n🧹 Removing #Tasks from note title...`);
-      await removeTasksHashtag(noteInfo.id);
+      // Clean up the note by removing processed tasks
+      console.log(`\n🧹 Cleaning up note...`);
+      await cleanupNote(note.id, note.name, tasks, noteContent);
     }
 
     console.log(`\n🎉 Successfully processed ${totalTasksProcessed} task(s)!`);
@@ -107,22 +112,35 @@ async function processAppleNotesToNotion() {
 }
 
 async function findTaskNotes() {
-  console.log("🔍 Scanning Apple Notes for #Tasks titles...");
+  console.log("🔍 Scanning Apple Notes...");
 
-  // AppleScript to find notes with #Tasks (case-insensitive)
+  // Use JSON format for cleaner parsing
   const script = `
-    set noteList to {}
+    set taskNotes to {}
+    
     tell application "Notes"
       repeat with theNote in notes
         set noteName to name of theNote as string
-        -- Case-insensitive check for #Tasks
-        if noteName contains "#tasks" or noteName contains "#Tasks" or noteName contains "#TASKS" then
+        set lowerName to do shell script "echo " & quoted form of noteName & " | tr '[:upper:]' '[:lower:]'"
+        
+        if lowerName is "#work" or lowerName is "#personal" then
           set noteId to id of theNote as string
-          set end of noteList to noteId & "|||" & noteName
+          -- Use JSON format for clean parsing
+          set noteJSON to "{\\"id\\": \\"" & noteId & "\\", \\"name\\": \\"" & noteName & "\\"}"
+          copy noteJSON to end of taskNotes
         end if
       end repeat
     end tell
-    return noteList as string
+    
+    -- Return as JSON array
+    return "[" & my joinList(taskNotes, ", ") & "]"
+    
+    on joinList(theList, theDelimiter)
+      set AppleScript's text item delimiters to theDelimiter
+      set theResult to theList as string
+      set AppleScript's text item delimiters to ""
+      return theResult
+    end joinList
   `;
 
   try {
@@ -130,22 +148,28 @@ async function findTaskNotes() {
       `osascript -e '${script.replace(/'/g, "'\"'\"'")}'`,
       {
         encoding: "utf8",
-        maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+        maxBuffer: 1024 * 1024 * 10,
       }
     ).trim();
 
-    if (!result) return [];
+    if (DEBUG) {
+      console.log("\n🐛 Debug - AppleScript result:");
+      console.log(result);
+      console.log("");
+    }
 
-    // Parse the results
-    const notes = result.split(", ").map((entry) => {
-      const [id, name] = entry.split("|||");
-      return { id, name };
-    });
+    // Parse JSON result
+    const notes = JSON.parse(result);
 
-    console.log(`✅ Found ${notes.length} note(s) with #Tasks`);
+    console.log(`✅ Found ${notes.length} task note(s):`);
+    notes.forEach((note) => console.log(`   - ${note.name}`));
+
     return notes;
   } catch (error) {
-    console.error("❌ Error finding notes:", error.message);
+    console.error(`❌ Error finding notes:`, error.message);
+    if (DEBUG) {
+      console.error("🐛 Debug - Full error:", error);
+    }
     return [];
   }
 }
@@ -154,7 +178,7 @@ async function getNoteContent(noteId) {
   const script = `
     tell application "Notes"
       set theNote to note id "${noteId}"
-      return body of theNote as string
+      return plaintext of theNote as string
     end tell
   `;
 
@@ -163,7 +187,7 @@ async function getNoteContent(noteId) {
       `osascript -e '${script.replace(/'/g, "'\"'\"'")}'`,
       {
         encoding: "utf8",
-        maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+        maxBuffer: 1024 * 1024 * 10,
       }
     );
     return content;
@@ -173,53 +197,62 @@ async function getNoteContent(noteId) {
   }
 }
 
-function extractTasksByHashtag(noteContent) {
+function extractTasks(noteContent, noteTitle) {
+  if (DEBUG) {
+    console.log("\n   📄 Note content:");
+    console.log("   ---START---");
+    console.log(noteContent);
+    console.log("   ---END---\n");
+  }
+
+  // Split by newlines and process each line
   const lines = noteContent.split("\n");
   const tasks = [];
-  let currentHashtag = null;
 
-  // Regex patterns
-  const hashtagRegex = /^#(work|personal)$/i;
-  const bulletRegex = /^\s*[•\-\*]|\d+\.\s/;
+  console.log(`   📝 Processing ${lines.length} lines...`);
 
-  console.log(`   📝 Parsing ${lines.length} lines...`);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
 
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-
-    // Check if this line is a hashtag (case-insensitive)
-    const hashtagMatch = trimmedLine.match(hashtagRegex);
-    if (hashtagMatch) {
-      currentHashtag = `#${hashtagMatch[1]}`;
-      console.log(`   #️⃣ Found hashtag: ${currentHashtag}`);
+    // Only skip if line is truly empty (no text at all)
+    if (line.trim().length === 0) {
+      if (DEBUG) console.log(`   Line ${i}: [empty line]`);
       continue;
     }
 
-    // Check if this line is a bullet point
-    if (bulletRegex.test(trimmedLine) && currentHashtag) {
-      // Remove bullet point marker and clean up text
-      const cleanText = trimmedLine
-        .replace(/^\s*[•\-\*]/, "") // Remove •, -, * bullets
-        .replace(/^\s*\d+\.\s/, "") // Remove numbered bullets
-        .trim();
+    // Skip if it's just the note title
+    if (line.trim().toLowerCase() === noteTitle.toLowerCase()) {
+      if (DEBUG) console.log(`   Line ${i}: "${line}" → Skipped (note title)`);
+      continue;
+    }
 
-      // Only add non-empty tasks
-      if (cleanText.length > 0) {
-        tasks.push({
-          text: cleanText,
-          hashtag: currentHashtag,
-        });
-        console.log(`   ✓ Found task: "${cleanText}" under ${currentHashtag}`);
-      } else {
-        console.log(`   ○ Skipped empty bullet under ${currentHashtag}`);
-      }
+    // Skip comment lines (starting with //)
+    if (line.trim().startsWith("//")) {
+      if (DEBUG) console.log(`   Line ${i}: "${line}" → Skipped (comment)`);
+      continue;
+    }
+
+    // Skip the special Apple Notes character
+    if (line.trim() === "￼" || line.charCodeAt(0) === 65532) {
+      if (DEBUG) console.log(`   Line ${i}: [special character] → Skipped`);
+      continue;
+    }
+
+    // Everything else is a task!
+    tasks.push({ text: line.trim() });
+    if (DEBUG) {
+      console.log(`   Line ${i}: "${line}" → Added as task`);
+    } else if (i < 5) {
+      // Show first few tasks in normal mode
+      console.log(`   ✓ "${line.trim()}"`);
     }
   }
 
+  console.log(`\n   📊 Total tasks found: ${tasks.length}`);
   return tasks;
 }
 
-async function classifyTask(taskText) {
+async function classifyPersonalTask(taskText) {
   // Build prompt with optional context
   let prompt = "";
 
@@ -235,20 +268,20 @@ ${CONTEXT}
   prompt += `Classify this personal task into exactly ONE of these categories:
 
 CATEGORIES:
-- 🏃‍♂️ Physical Health
-- 🌱 Personal
-- 🍻 Interpersonal  
-- ❤️ Mental Health
-- 🏠 Home
+- 🏃‍♂️ Physical Health (exercise, workout, gym, running, sports, fitness)
+- 🌱 Personal (reading, learning, hobbies, personal projects)
+- 🍻 Interpersonal (social, friends, family, relationships)
+- ❤️ Mental Health (meditation, therapy, self-care, relaxation)
+- 🏠 Home (cleaning, laundry, organizing, household tasks)
 
 TASK: "${taskText}"
 
-Return ONLY the category with emoji, nothing else.`;
+Respond with ONLY the exact category text including the emoji. For example: "🏃‍♂️ Physical Health" not just "🏃‍♂️"`;
 
   try {
     const message = await anthropic.messages.create({
       model: "claude-3-haiku-20240307",
-      max_tokens: 20,
+      max_tokens: 30,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -315,48 +348,73 @@ async function createNotionTasks(tasks) {
   }
 }
 
-async function removeTasksHashtag(noteId) {
+async function cleanupNote(noteId, noteName, processedTasks, originalContent) {
+  // Create a set of processed task texts for easy lookup
+  const processedTexts = new Set(processedTasks.map((task) => task.text));
+
+  // Determine the note type from the note NAME (not content!)
+  const noteType = noteName.toLowerCase().includes("work")
+    ? "#Work"
+    : "#Personal";
+
+  // Split content into lines and filter
+  const lines = originalContent.split("\n");
+  const cleanedLines = [];
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+
+    // Skip the special Apple Notes character
+    if (trimmedLine === "￼" || line.charCodeAt(0) === 65532) {
+      continue;
+    }
+
+    // Skip processed tasks and the original title (we'll add it back)
+    if (
+      processedTexts.has(trimmedLine) ||
+      trimmedLine.toLowerCase() === "#work" ||
+      trimmedLine.toLowerCase() === "#personal"
+    ) {
+      continue;
+    }
+
+    // Keep everything else (comments, empty lines, etc.)
+    cleanedLines.push(line);
+  }
+
+  // Build HTML: Start with H1 title, then add all the cleaned lines
+  let htmlContent = `<h1>${noteType}</h1>`;
+
+  // Add each line as a div (or br for empty lines)
+  for (const line of cleanedLines) {
+    if (line.trim() === "") {
+      htmlContent += "<br>";
+    } else {
+      htmlContent += `<div>${line}</div>`;
+    }
+  }
+
+  // Update the note BODY with title + remaining content
   const script = `
     tell application "Notes"
       set theNote to note id "${noteId}"
-      set oldName to name of theNote as string
-      set newName to oldName
-      
-      -- Remove all case variations of #Tasks
-      set searchTerms to {"#Tasks", "#tasks", "#TASKS"}
-      repeat with searchTerm in searchTerms
-        if oldName contains searchTerm then
-          set AppleScript's text item delimiters to searchTerm
-          set textItems to text items of newName
-          set AppleScript's text item delimiters to ""
-          set newName to textItems as string
-        end if
-      end repeat
-      
-      -- Trim any extra spaces
-      set newName to newName as string
-      repeat while newName starts with " "
-        set newName to text 2 thru -1 of newName
-      end repeat
-      repeat while newName ends with " "
-        set newName to text 1 thru -2 of newName
-      end repeat
-      
-      set name of theNote to newName
-      return "Updated: " & oldName & " -> " & newName
+      set body of theNote to "${htmlContent.replace(/"/g, '\\"')}"
+      return "Cleaned"
     end tell
   `;
 
   try {
-    const result = execSync(
-      `osascript -e '${script.replace(/'/g, "'\"'\"'")}'`,
-      {
-        encoding: "utf8",
-      }
-    ).trim();
-    console.log(`   ✅ ${result}`);
+    await execSync(`osascript -e '${script.replace(/'/g, "'\"'\"'")}'`, {
+      encoding: "utf8",
+    });
+    console.log(
+      `   ✅ Removed ${processedTasks.length} processed task(s) from note`
+    );
   } catch (error) {
-    console.error(`   ❌ Error removing hashtag: ${error.message}`);
+    console.error(`   ❌ Error cleaning note: ${error.message}`);
+    if (DEBUG) {
+      console.error("Script that failed:", script);
+    }
   }
 }
 

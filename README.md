@@ -1,5 +1,6 @@
-# Notion AI Task Summary Automation
+# Notion AI Task Maker
 
+// TO BE CHANGED!!
 Automated system that generates AI-powered summaries of completed tasks by category for weekly retrospectives in Notion. Uses Claude AI to create professional, concise summaries that respect your time and use natural language.
 
 ## ✨ Features

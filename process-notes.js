@@ -39,7 +39,39 @@ const TASK_CATEGORIES = [
   "🏠 Home",
 ];
 
+// Track task counts by category for reporting
+const taskCounts = {
+  "💼 Work": 0,
+  "🏃‍♂️ Physical Health": 0,
+  "🌱 Personal": 0,
+  "🍻 Interpersonal": 0,
+  "❤️ Mental Health": 0,
+  "🏠 Home": 0,
+};
+
+// Helper function for asking questions
+function askQuestion(question) {
+  const readline = require("readline").createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    readline.question(question, (answer) => {
+      readline.close();
+      resolve(answer);
+    });
+  });
+}
+
 async function processAppleNotesToNotion() {
+  let noteTaskCounts = {}; // Track tasks per note
+  let allNotesData = []; // Store note data for processing after confirmation
+
+  // Check for flags
+  const isDryRun = process.argv.includes("--dry-run");
+  const skipConfirmation = process.argv.includes("--yes");
+
   try {
     console.log("🚀 Starting Apple Notes to Notion task automation...");
     console.log("🔍 Looking for notes titled #Work or #Personal\n");
@@ -51,20 +83,20 @@ async function processAppleNotesToNotion() {
       console.log(
         "❌ No notes found with #Work or #Personal. Nothing to process!"
       );
-      return;
+      process.exit(1); // Exit with error code
     }
 
     console.log(`📝 Found ${allNotes.length} note(s) to process`);
 
     let totalTasksProcessed = 0;
 
-    // Process each note
+    // First pass: analyze notes and count tasks
     for (const note of allNotes) {
       const noteType = note.name.toLowerCase().includes("work")
         ? "work"
         : "personal";
       console.log(
-        `\n📋 Processing ${
+        `\n📋 Analyzing ${
           noteType === "work" ? "💼 Work" : "🌱 Personal"
         } note: "${note.name}"`
       );
@@ -92,22 +124,101 @@ async function processAppleNotesToNotion() {
           task.category = await classifyPersonalTask(task.text);
           console.log(`   🤖 "${task.text}" → ${task.category}`);
         }
+
+        // Track category count
+        if (taskCounts[task.category] !== undefined) {
+          taskCounts[task.category]++;
+        }
       }
 
-      // Create Notion entries
-      console.log(`\n📤 Creating ${tasks.length} Notion task(s)...`);
-      await createNotionTasks(tasks);
+      // Store this note's data for later processing
+      allNotesData.push({
+        note: note,
+        noteContent: noteContent,
+        tasks: tasks,
+        noteType: noteType,
+      });
 
+      // Store this note's task count
+      noteTaskCounts[note.name] = tasks.length;
       totalTasksProcessed += tasks.length;
-
-      // Clean up the note by removing processed tasks
-      console.log(`\n🧹 Cleaning up note...`);
-      await cleanupNote(note.id, note.name, tasks, noteContent);
     }
 
-    console.log(`\n🎉 Successfully processed ${totalTasksProcessed} task(s)!`);
+    // If dry run, just write counts and exit
+    if (isDryRun) {
+      const countsData = {
+        total: totalTasksProcessed,
+        categories: taskCounts,
+        notes: noteTaskCounts,
+      };
+      fs.writeFileSync("/tmp/task-counts.json", JSON.stringify(countsData));
+
+      if (totalTasksProcessed > 0) {
+        process.exit(0); // Success - found tasks
+      } else {
+        process.exit(1); // No tasks found
+      }
+    }
+
+    // Show what we found and ask for confirmation (unless --yes flag is used)
+    if (totalTasksProcessed > 0) {
+      if (!skipConfirmation) {
+        console.log(`\n📊 Found tasks in your notes:`);
+        for (const [noteName, count] of Object.entries(noteTaskCounts)) {
+          console.log(`   ${noteName}: ${count} task(s)`);
+        }
+
+        console.log(
+          `\n⚠️  These will be moved to Notion and removed from your notes.`
+        );
+        const answer = await askQuestion(`❓ Continue? (y/n): `);
+
+        if (answer.toLowerCase() !== "y") {
+          console.log(`❌ Cancelled`);
+          process.exit(0);
+        }
+      }
+
+      // Now actually process each note
+      for (const noteData of allNotesData) {
+        const { note, noteContent, tasks } = noteData;
+
+        console.log(
+          `\n📤 Creating ${tasks.length} task(s) from ${note.name}...`
+        );
+        await createNotionTasks(tasks);
+
+        console.log(`🧹 Cleaning up ${note.name}...`);
+        await cleanupNote(note.id, note.name, tasks, noteContent);
+      }
+
+      // Print summary with counts
+      console.log(`\n📊 Summary:`);
+      Object.entries(taskCounts).forEach(([category, count]) => {
+        if (count > 0) {
+          console.log(`   ${category}: ${count}`);
+        }
+      });
+      console.log(`   📤 Total created in Notion: ${totalTasksProcessed}`);
+
+      // Write counts to a temporary file for Automator to read
+      const countsData = {
+        total: totalTasksProcessed,
+        categories: taskCounts,
+      };
+      fs.writeFileSync("/tmp/task-counts.json", JSON.stringify(countsData));
+
+      console.log(
+        `\n🎉 Successfully processed ${totalTasksProcessed} task(s)!`
+      );
+      process.exit(0); // Success
+    } else {
+      console.log("❌ No tasks found to process!");
+      process.exit(1);
+    }
   } catch (error) {
     console.error("❌ Error in Apple Notes processing:", error);
+    process.exit(1); // Failure
   }
 }
 

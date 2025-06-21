@@ -1,33 +1,27 @@
 # 🤖 Apple Notes to Notion Task Processor
 
-Automated system that captures tasks from Apple Notes and creates them in Notion with AI-powered categorization. Write tasks naturally in Apple Notes, and let this tool organize them instantly via Spotlight!
+This Node.js automation tool scans Apple Notes for notes titled "#Work" or "#Personal", extracts all text lines as tasks, uses Claude AI to categorize them into health/work/personal types, creates organized Notion database entries, and cleans up the original notes while preserving comments.
 
 ## ✨ Features
 
-- **🎯 Two Ways to Run**:
-  - Terminal with confirmation prompt
-  - Spotlight integration via Automator app
-- **Natural Task Capture**: Write tasks in Apple Notes without special formatting
-- **AI-Powered Classification**: Automatically categorizes personal tasks using Claude AI
-- **Comment Support**: Use `//` to add notes that won't become tasks
-- **Auto-Cleanup**: Removes processed tasks while preserving comments and structure
-- **Flexible Input**: Works with bullets (`*`, `-`) or plain text
-- **Interactive Confirmation**: See what will be processed before committing
-- **Success Notifications**: Audio alerts and dialogs confirm completion
+- **Smart Note Detection**: Automatically finds notes titled `#Work` or `#Personal` (case-insensitive)
+- **AI-Powered Classification**: Uses Claude API to categorize personal tasks into Physical Health, Personal, Interpersonal, Mental Health, and Home
+- **Comment Preservation**: Lines starting with `//` are kept as notes and won't become tasks
+- **Interactive Confirmation**: Preview what will be processed before committing changes
+- **Flexible Execution**: Run with confirmation prompts, dry-run mode, or auto-confirmation
+- **Clean Processing**: Removes processed tasks while maintaining note structure and comments
 
 ## 🚀 Quick Start
 
-### Initial Setup
+### Setup
 
-1. **Clone and install**:
+1. **Install dependencies**:
 
    ```bash
-   git clone <your-repo>
-   cd notion-scripts/task-maker
    npm install
    ```
 
-2. **Set up environment** (create `.env` file):
+2. **Configure environment** (create `.env` file):
 
    ```env
    NOTION_TOKEN=your_notion_integration_token
@@ -35,298 +29,105 @@ Automated system that captures tasks from Apple Notes and creates them in Notion
    TASKS_DATABASE_ID=your_notion_tasks_database_id
    ```
 
-3. **Create context file** (optional):
+3. **Optional context file**:
    ```bash
    touch context.md
-   # Add personal context for better AI categorization
+   # Add personal context to improve AI task categorization
    ```
 
-## 🎮 Two Ways to Use
+### Usage
 
-### 1. Terminal Mode
-
-Run directly for interactive confirmation:
+**Interactive mode** (with confirmation):
 
 ```bash
 node process-notes.js
 ```
 
-You'll see:
+**Dry run** (preview only):
 
-```
-🚀 Starting Apple Notes to Notion task automation...
-🔍 Looking for notes titled #Work or #Personal
-
-📊 Found tasks in your notes:
-   #Work: 3 task(s)
-   #Personal: 2 task(s)
-
-⚠️  These will be moved to Notion and removed from your notes.
-❓ Continue? (y/n):
+```bash
+node process-notes.js --dry-run
 ```
 
-### 2. Spotlight Mode (via Automator)
+**Auto-confirm** (skip prompts):
 
-Press `Cmd + Space`, type "Task", and hit Enter for the full GUI experience!
-
-## 🤖 Automator Setup (Spotlight Integration)
-
-Transform this into a macOS-native app accessible from anywhere!
-
-### Creating the Automator App
-
-1. **Open Automator** and create a new **Application**
-
-2. **Add "Run AppleScript" action** with this code:
-
-```applescript
-on run {input, parameters}
-    -- Simple intro dialog
-    display dialog "🤖 Task Processor" & return & return & "This will:" & return & "• Find tasks in #Work and #Personal notes" & return & "• Move them to Notion" & return & "• Clean up your notes" & return & return & "Ready to scan your notes?" buttons {"Cancel", "Scan Notes"} default button "Scan Notes" with title "🤖 Task Processor" with icon note
-
-    -- Return empty array to pass to shell script
-    return {}
-end run
+```bash
+node process-notes.js --yes
 ```
 
-3. **Add "Run Shell Script" action** with:
+## 📝 How It Works
 
-   - Shell: `/bin/zsh`
-   - Pass input: **as arguments** ⚠️ IMPORTANT!
-   - Code:
-
-   ```bash
-   #!/bin/zsh
-   # Load your node environment
-   export PATH="/Users/YOUR_USERNAME/.nvm/versions/node/vXX.XX.X/bin:$PATH"
-
-   # Navigate to your task-maker directory
-   cd /path/to/your/task-maker
-
-   # First, run in dry-run mode to see what we'll process
-   node process-notes.js --dry-run
-
-   # Check if the dry run found any tasks
-   if [ $? -ne 0 ]; then
-       # No tasks found
-       osascript -e 'tell application "System Events" to display dialog "📭 No tasks found!" & return & return & "Your #Work and #Personal notes are empty." buttons {"OK"} default button "OK" with title "🤖 Task Processor"'
-       exit 0
-   fi
-
-   # Read the task counts
-   if [ -f "/tmp/task-counts.json" ]; then
-       # Parse the counts
-       TOTAL_TASKS=$(cat /tmp/task-counts.json | grep -o '"total":[0-9]*' | grep -o '[0-9]*')
-
-       # Get counts for each note type
-       WORK_COUNT=$(cat /tmp/task-counts.json | grep -o '"💼 Work":[0-9]*' | grep -o '[0-9]*' || echo "0")
-       PERSONAL_COUNT=0
-
-       # Sum up all personal categories
-       for category in "🏃‍♂️ Physical Health" "🌱 Personal" "🍻 Interpersonal" "❤️ Mental Health" "🏠 Home"; do
-           COUNT=$(cat /tmp/task-counts.json | grep -o "\"$category\":[0-9]*" | grep -o '[0-9]*' || echo "0")
-           PERSONAL_COUNT=$((PERSONAL_COUNT + COUNT))
-       done
-
-       # Build the message
-       DETAILS=""
-       if [ "$WORK_COUNT" -gt 0 ]; then
-           DETAILS="${DETAILS}#Work: ${WORK_COUNT} task(s)"$'\n'
-       fi
-       if [ "$PERSONAL_COUNT" -gt 0 ]; then
-           DETAILS="${DETAILS}#Personal: ${PERSONAL_COUNT} task(s)"$'\n'
-       fi
-
-       # Remove trailing newline
-       DETAILS=$(echo -n "$DETAILS")
-
-       # Show confirmation dialog
-       osascript <<EOF
-       tell application "System Events"
-           set dialogResult to display dialog "📊 Found tasks in your notes:" & return & return & "${DETAILS}" & return & return & "⚠️ These will be moved to Notion and removed from your notes." buttons {"Cancel", "Process Tasks"} default button "Process Tasks" with title "🤖 Task Processor" with icon note
-
-           if button returned of dialogResult is "Cancel" then
-               error number -128
-           end if
-       end tell
-   EOF
-
-       # Check if user cancelled
-       if [ $? -eq 128 ]; then
-           rm -f /tmp/task-counts.json
-           exit 0
-       fi
-
-       # User confirmed - run the actual processing
-       node process-notes.js --yes
-
-       EXIT_CODE=$?
-
-       # Clean up temp file
-       rm -f /tmp/task-counts.json
-
-       if [ $EXIT_CODE -eq 0 ]; then
-           # Success dialog
-           osascript -e "tell application \"System Events\" to display dialog \"✅ Success!\" & return & return & \"${TOTAL_TASKS} task(s) have been moved to Notion.\" & return & return & \"Your notes have been cleaned up.\" buttons {\"OK\"} default button \"OK\" with title \"🤖 Task Processor\""
-
-           # Also show notification
-           osascript -e "display notification \"${TOTAL_TASKS} tasks moved to Notion!\" with title \"🤖 Tasks Complete\" sound name \"Glass\""
-       else
-           # Error occurred
-           osascript -e 'tell application "System Events" to display dialog "❌ Error processing tasks" & return & return & "Check the terminal for details." buttons {"OK"} default button "OK" with title "Task Processor"'
-       fi
-   else
-       osascript -e 'tell application "System Events" to display dialog "❌ Error reading task counts" buttons {"OK"} default button "OK" with title "Task Processor"'
-       exit 1
-   fi
-   ```
-
-4. **Update the paths**:
-
-   - Find your node path: `which node`
-   - Update the `export PATH` line with your result
-   - Update the `cd` line to your task-maker directory path
-
-5. **Save as Application**:
-   - Name: "Task Processor" (or whatever you like)
-   - Where: Applications folder
-   - File Format: Application
-
-### Using from Spotlight
-
-1. Press `Cmd + Space`
-2. Type "Task" (or your app name)
-3. Press Enter
-4. Follow the dialogs:
-   - Click "Scan Notes" to start
-   - Review found tasks
-   - Click "Process Tasks" to confirm
-5. Get success notification with sound!
-
-### Dialog Flow
-
-When using the Automator app, you'll see:
-
-1. **Intro Dialog**: Explains what will happen
-2. **Confirmation Dialog**: Shows task counts by note
-3. **Success Dialog**: Confirms completion
-4. **Notification Center**: Alert with sound
-
-### Customizing the App Icon
-
-Want a cool 🤖 icon for Spotlight?
-
-1. Find a high-res robot emoji image
-2. Right-click your Automator app → Get Info
-3. Drag the image onto the icon in the top-left
-4. Now it shows in Spotlight with your custom icon!
-
-### How It Works
-
-The automation flow:
-
-1. **AppleScript** shows the intro dialog
-2. **Shell script** runs `--dry-run` to analyze notes
-3. **Dialog** shows what was found
-4. **User confirms** → runs with `--yes` flag
-5. **Success** notification with task count
-
-## 📋 Notion Setup Requirements
-
-### Tasks Database
-
-Your Notion tasks database needs these properties:
-
-- **Task** (Title) - The task description
-- **Due Date** (Date) - Set to today by default
-- **Type** (Select) - With these options:
-  - 🏃‍♂️ Physical Health
-  - 💼 Work
-  - 🌱 Personal
-  - 🍻 Interpersonal
-  - ❤️ Mental Health
-  - 🏠 Home
-- **Status** (Status) - Including "🔴 To Do"
-
-## 📝 Usage Guide
-
-### Setting Up Apple Notes
+### Apple Notes Setup
 
 Create two notes in Apple Notes:
 
-- One titled `#Work` (case-insensitive)
-- One titled `#Personal` (case-insensitive)
+- One titled `#Work`
+- One titled `#Personal`
 
-### Writing Tasks
-
-**#Work note:**
+Add your tasks as individual lines:
 
 ```
 #Work
-Fix bug in login flow
 Review design mockups
+Fix login bug
 Call client about project
 
-// Done yesterday:
-// Updated documentation
+// Meeting notes from yesterday
+// Remember to follow up on proposal
 ```
-
-**#Personal note:**
 
 ```
 #Personal
 Workout at gym
 Buy groceries
-* Call mom
-- Schedule dentist
+Call mom
+Schedule dentist appointment
 
 // Weekend plans
-Go hiking
-// Remember to bring water
+// Pick up dry cleaning
 ```
+
+### Task Processing
+
+1. **Extraction**: Every non-empty line becomes a task (except comments starting with `//`)
+2. **Classification**:
+   - Work tasks → automatically tagged as "💼 Work"
+   - Personal tasks → AI classifies into appropriate categories
+3. **Notion Creation**: Tasks added with today's date and "🔴 To Do" status
+4. **Cleanup**: Processed tasks removed from notes, comments preserved
 
 ### Task Categories
 
-The AI automatically categorizes personal tasks:
+Personal tasks are automatically categorized into:
 
-- **🏃‍♂️ Physical Health**: Exercise, sports, fitness
-- **🌱 Personal**: Reading, learning, hobbies
-- **🍻 Interpersonal**: Social activities, friends, family
+- **🏃‍♂️ Physical Health**: Exercise, sports, fitness activities
+- **🌱 Personal**: Reading, learning, hobbies, personal projects
+- **🍻 Interpersonal**: Social activities, friends, family time
 - **❤️ Mental Health**: Meditation, therapy, self-care
-- **🏠 Home**: Cleaning, organizing, household
+- **🏠 Home**: Cleaning, organizing, household tasks
 
-Work tasks are always categorized as "💼 Work".
+## 🛠️ Notion Database Requirements
 
-## 💡 Tips & Tricks
+Your Notion tasks database needs these properties:
 
-### Comments
+- **Task** (Title) - The task description
+- **Due Date** (Date) - Set to today by default
+- **Type** (Select) - Categories listed above
+- **Status** (Status) - Including "🔴 To Do" option
 
-Use `//` for notes that won't become tasks:
+## 💡 Tips
 
-```
-// Morning routine
-Make coffee
-Meditate 10 mins
-// After work
-Gym class at 6pm
-```
-
-### Natural Writing
-
-No special formatting needed:
+**Use comments for context**:
 
 ```
-Call John about proposal
-* Pick up dry cleaning
-- Buy birthday gift
-Schedule team lunch
+Buy birthday gift for Sarah
+Call John about the proposal
+// Sarah's birthday is next week
+// John is the project manager
 ```
 
-All formats work equally well!
-
-### Context File
-
-Create `context.md` for better AI categorization:
+**Add context for better AI classification**:
+Create `context.md` with personal details:
 
 ```markdown
 # Context for AI Task Classification
@@ -334,103 +135,51 @@ Create `context.md` for better AI categorization:
 ## People
 
 - Sarah: My sister
-- John: Project manager
+- John: Project manager at work
 
-## Places
+## Activities
 
-- Gym class: Spin class at FitLife
+- Spin class: My regular workout at FitLife gym
 ```
-
-## 🎯 Sample Workflows
-
-### Morning Routine
-
-1. Add tasks to Apple Notes throughout the day
-2. Cmd+Space → "Task" → Enter
-3. Review what will be processed
-4. Confirm → Done in seconds!
-
-### Quick Capture
-
-1. Open Apple Notes
-2. Add to #Work or #Personal
-3. Run Task Processor when ready
-4. Notes are cleaned, tasks organized
-
-### Batch Processing
-
-1. Accumulate tasks over days
-2. Process them all at once
-3. Start fresh with clean notes
-
-## 🛡️ Security Best Practices
-
-- **API keys**: Always in `.env` (never commit!)
-- **Context file**: Personal info in `context.md` (gitignored)
-- **Database IDs**: Environment variables only
 
 ## 🐛 Troubleshooting
 
-### Automator Issues
-
-**"command not found: node"**: Update the PATH in shell script:
-
-```bash
-which node  # Find your node path
-# Update the export PATH line
-```
-
-**No tasks found**: Ensure notes are titled exactly `#Work` or `#Personal`
-
-**Dialog not showing**: Make sure to save Automator app after changes
-
-### Terminal Issues
-
-**Tasks not categorizing well**: Add context to `context.md`
-
-**Debug mode**: Set `DEBUG=true` in `.env` for verbose output
-
-### Common Fixes
-
-- Notes must be in the default Notes account
-- Task types must match your Notion database exactly
-- Comments must start with `//` at line beginning
-
-## 💰 Cost Estimation
-
-- **Per task**: ~$0.0001 (using Claude Haiku)
-- **100 tasks**: ~$0.01
-- **Daily use (10 tasks)**: ~$0.03/month
-
-Incredibly affordable for the convenience!
-
-## 🔄 Command-Line Flags
-
-- `--dry-run`: Analyze without processing
-- `--yes`: Skip confirmation prompt
-- `DEBUG=true`: Verbose output for troubleshooting
-
-## 🎉 Advanced Features
-
-### Debugging
+**Debug mode**:
 
 ```bash
 DEBUG=true node process-notes.js
 ```
 
-Shows:
+**Common issues**:
 
-- Full note content
-- Line-by-line processing
-- AI classification details
+- Ensure notes are titled exactly `#Work` or `#Personal`
+- Check that Notion database properties match requirements
+- Verify API keys are correctly set in `.env`
 
-### Automation Ideas
+## 🔧 Technical Details
 
-- Schedule with cron for daily processing
-- Integrate with other automation tools
-- Add keyboard shortcuts with Shortcuts app
+**Dependencies**:
+
+- `@notionhq/client` - Notion API integration
+- `@anthropic-ai/sdk` - Claude AI for task classification
+- `applescript` - Apple Notes access via AppleScript
+- `dotenv` - Environment variable management
+
+**Architecture**:
+
+- AppleScript integration for secure Apple Notes access
+- Claude Haiku for cost-effective task classification (~$0.0001 per task)
+- Notion API for structured task management
+- Node.js orchestration with error handling and confirmation flows
+
+## 📊 Cost Estimation
+
+- **Per task**: ~$0.0001 (using Claude Haiku)
+- **Daily use (10 tasks)**: ~$0.03/month
+- **Heavy use (100 tasks/month)**: ~$0.01/month
+
+Extremely affordable for the productivity boost!
 
 ---
 
-**Built with**: Notion API, Claude AI, Node.js, AppleScript, macOS Automator
-**Time saved**: Turn chaotic notes into organized tasks in seconds! 🚀
+**Built with**: Node.js, AppleScript, Notion API, Claude AI
